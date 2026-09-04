@@ -1,0 +1,18 @@
+﻿# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Scanner quarantine & reports
+**/quarantine/*
+!**/quarantine/.gitkeep
+**/reports/*
+!**/reports/.gitkeep
+
+# Environments & IDEs
+.env
+.venv
+env/
+venv/
+.vscode/
+.idea/

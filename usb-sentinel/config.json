@@ -1,0 +1,23 @@
+﻿{
+    "poll_interval_seconds": 2,
+    "auto_quarantine": false,
+    "quarantine_dir": "quarantine",
+    "reports_dir": "reports",
+    "enable_defender_scan": true,
+    "defender_path": "C:\\Program Files\\Windows Defender\\MpCmdRun.exe",
+    "enable_desktop_notifications": true,
+    "enable_audio_alert": true,
+    "max_file_size_mb": 100,
+    "suspicious_extensions": [
+        ".exe", ".scr", ".vbs", ".bat", ".cmd", 
+        ".ps1", ".hta", ".pif", ".jar", ".com", ".wsf", ".lnk"
+    ],
+    "double_extension_targets": [
+        ".pdf", ".doc", ".docx", ".xls", ".xlsx", 
+        ".jpg", ".jpeg", ".png", ".txt", ".mp4", ".zip", ".rar"
+    ],
+    "known_malicious_hashes": {
+        "44d88612fea8a8f36de82e1278abb02f": "EICAR-Standard-AV-Test (MD5)",
+        "275a021bbfb6489e54d471899f7db9d1663fc695ec2fe2a2c4538aabf651fd0f": "EICAR-Standard-AV-Test (SHA-256)"
+    }
+}
