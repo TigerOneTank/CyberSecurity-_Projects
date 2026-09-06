@@ -12,7 +12,7 @@
 
 | Project | Category | Tech Stack | Status | Documentation |
 | :--- | :--- | :--- | :--- | :--- |
-| **[USB-Sentinel](./usb-sentinel)** | Endpoint Defense / Forensics | Python 3, Win32 API, Windows Defender CLI | 🟢 Production Ready | [View Project README](./usb-sentinel/README.md) |
+| **[USB-Sentinel](./usb-sentinel)** | Endpoint Defense / Forensics | Python 3, Win32 API, Windows Defender CLI | Ready | [View Project README](./usb-sentinel/README.md) |
 
 ---
 
