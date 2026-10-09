@@ -1,0 +1,12 @@
+﻿{
+    "port_scan_threshold_ports": 15,
+    "port_scan_window_seconds": 5.0,
+    "syn_flood_threshold_packets": 40,
+    "dns_entropy_threshold": 3.8,
+    "dns_length_threshold": 45,
+    "pcap_capture_dir": "captures",
+    "reports_dir": "reports",
+    "enable_pcap_dump": true,
+    "enable_audio_alert": true,
+    "enable_desktop_notifications": true
+}
