@@ -1,7 +1,7 @@
 ﻿import os
 import json
 
-DEFAULT_CONFIG = {
+DEFAULTS = {
     "port_scan_threshold_ports": 15,
     "port_scan_window_seconds": 5.0,
     "syn_flood_threshold_packets": 40,
@@ -15,19 +15,19 @@ DEFAULT_CONFIG = {
 }
 
 class Config:
-    def __init__(self, config_file="config.json"):
-        self.config_file = config_file
-        self.data = DEFAULT_CONFIG.copy()
+    def __init__(self, path="config.json"):
+        self.path = path
+        self.data = dict(DEFAULTS)
         self.load()
 
     def load(self):
-        if os.path.exists(self.config_file):
-            try:
-                with open(self.config_file, "r", encoding="utf-8-sig") as f:
-                    user_data = json.load(f)
-                    self.data.update(user_data)
-            except Exception as e:
-                print(f"[!] Warning: Could not load {self.config_file}: {e}. Using defaults.")
+        if not os.path.exists(self.path):
+            return
+        try:
+            with open(self.path, "r", encoding="utf-8-sig") as fh:
+                self.data.update(json.load(fh))
+        except (json.JSONDecodeError, OSError) as err:
+            print(f"[!] Warning: failed reading {self.path} ({err}), using defaults")
 
-    def get(self, key, default=None):
-        return self.data.get(key, default if default is not None else DEFAULT_CONFIG.get(key))
+    def get(self, key, fallback=None):
+        return self.data.get(key, fallback if fallback is not None else DEFAULTS.get(key))

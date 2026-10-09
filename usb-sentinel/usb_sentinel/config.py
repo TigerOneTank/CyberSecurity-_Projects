@@ -1,7 +1,7 @@
 ﻿import os
 import json
 
-DEFAULT_CONFIG = {
+DEFAULTS = {
     "poll_interval_seconds": 2,
     "auto_quarantine": False,
     "quarantine_dir": "quarantine",
@@ -26,26 +26,23 @@ DEFAULT_CONFIG = {
 }
 
 class Config:
-    def __init__(self, config_file="config.json"):
-        self.config_file = config_file
-        self.data = DEFAULT_CONFIG.copy()
-        self.load()
+    def __init__(self, cfg_path="config.json"):
+        self.cfg_path = cfg_path
+        self.data = dict(DEFAULTS)
+        self.reload()
 
-    def load(self):
-        if os.path.exists(self.config_file):
-            try:
-                with open(self.config_file, "r", encoding="utf-8-sig") as f:
-                    user_data = json.load(f)
-                    self.data.update(user_data)
-            except Exception as e:
-                print(f"[!] Warning: Could not load {self.config_file}: {e}. Using defaults.")
+    def reload(self):
+        if not os.path.exists(self.cfg_path):
+            return
+        try:
+            with open(self.cfg_path, "r", encoding="utf-8-sig") as fh:
+                self.data.update(json.load(fh))
+        except (json.JSONDecodeError, OSError) as err:
+            print(f"[!] bad config ({self.cfg_path}): {err}, falling back to defaults")
 
-    def get(self, key, default=None):
-        return self.data.get(key, default if default is not None else DEFAULT_CONFIG.get(key))
+    def get(self, key, fallback=None):
+        return self.data.get(key, fallback if fallback is not None else DEFAULTS.get(key))
 
     def save(self):
-        try:
-            with open(self.config_file, "w", encoding="utf-8") as f:
-                json.dump(self.data, f, indent=4)
-        except Exception as e:
-            print(f"[!] Warning: Could not save {self.config_file}: {e}")
+        with open(self.cfg_path, "w", encoding="utf-8") as fh:
+            json.dump(self.data, fh, indent=4)

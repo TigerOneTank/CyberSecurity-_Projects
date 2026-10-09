@@ -16,73 +16,41 @@ BANNER = r"""
                       Author: DuckWater (@TigerOneTank)
 """
 
-def print_banner():
+def launch_sim(cfg):
     print(BANNER)
+    print("[*] Generating synthetic raw attack sequence...")
+    stream = TrafficSimulator.generate_attack_stream()
+    print(f"[+] Dispatched {len(stream)} frames across 5 threat scenarios.")
 
-def run_simulation(config):
-    print_banner()
-    print("[*] INITIATING SAFE NETWORK ATTACK TRAFFIC SIMULATION...")
-    packets = TrafficSimulator.generate_attack_stream()
-    print(f"[+] Synthesized {len(packets)} raw network packets covering 5 threat vectors:")
-    print("    1. Benign Web Browsing Traffic (baseline)")
-    print("    2. Stealth TCP XMAS Port Scan (nmap -sX)")
-    print("    3. Multi-Port Reconnaissance Sweep (TCP SYN sweep)")
-    print("    4. ARP Cache Poisoning / MitM Gateway Claim")
-    print("    5. High-Frequency SYN Flood Denial of Service")
-    print("    6. DNS Tunneling & Base64 Data Exfiltration")
-    print("    7. Cleartext HTTP Credential Leakage")
+    engine = NidsEngine(cfg.data)
+    for frame in stream:
+        engine.process_packet(frame["bytes"])
 
-    print("\n[*] Processing packets through Net-Sentry dissection pipeline...")
-    engine = NidsEngine(config.data)
-    for pkt in packets:
-        engine.process_packet(pkt["bytes"])
-
-    engine.finalize_session(mode="SIMULATED_ATTACK_STREAM")
+    engine.finalize_session(label="SIMULATED_ATTACK_STREAM")
 
 def main():
-    parser = argparse.ArgumentParser(
+    cli = argparse.ArgumentParser(
         description="Net-Sentry: Network Intrusion Detection System (NIDS) & Protocol Dissector"
     )
-    parser.add_argument(
-        "--simulate",
-        action="store_true",
-        help="Run safe simulated attack stream (Port scans, ARP spoofing, SYN flood, DNS tunneling)"
-    )
-    parser.add_argument(
-        "--pcap",
-        metavar="FILE.PCAP",
-        type=str,
-        help="Analyze an offline Wireshark .pcap packet capture file"
-    )
-    parser.add_argument(
-        "--live",
-        action="store_true",
-        help="Run live raw packet sniffer on local interface (Requires Admin on Windows)"
-    )
-    parser.add_argument(
-        "--host",
-        type=str,
-        default=None,
-        help="Host IP to bind live sniffer to (default: local IP)"
-    )
+    cli.add_argument("--simulate", action="store_true", help="Run simulated attack stream")
+    cli.add_argument("--pcap", metavar="FILE.PCAP", type=str, help="Ingest offline libpcap file")
+    cli.add_argument("--live", action="store_true", help="Start live raw packet sniffer (Admin required)")
+    cli.add_argument("--host", type=str, default=None, help="Host IP override for live capture")
 
-    args = parser.parse_args()
-    config = Config()
+    args = cli.parse_args()
+    cfg = Config()
 
     if args.simulate:
-        run_simulation(config)
+        launch_sim(cfg)
     elif args.pcap:
-        print_banner()
-        engine = NidsEngine(config.data)
-        engine.analyze_pcap(args.pcap)
+        print(BANNER)
+        NidsEngine(cfg.data).analyze_pcap(args.pcap)
     elif args.live:
-        print_banner()
-        engine = NidsEngine(config.data)
-        engine.run_live(host_ip=args.host)
+        print(BANNER)
+        NidsEngine(cfg.data).run_live(bind_ip=args.host)
     else:
-        print_banner()
-        parser.print_help()
-        print("\nTip: To run a safe intrusion detection test right now, run:  py main.py --simulate")
+        print(BANNER)
+        cli.print_help()
 
 if __name__ == "__main__":
     main()

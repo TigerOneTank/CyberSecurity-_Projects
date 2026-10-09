@@ -8,7 +8,6 @@ from .detector import NetworkDetector
 from .pcap_writer import PcapWriter
 from .reporter import NidsReporter
 
-# Ensure UTF-8 output on Windows
 if sys.stdout and hasattr(sys.stdout, "reconfigure"):
     try:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -16,18 +15,15 @@ if sys.stdout and hasattr(sys.stdout, "reconfigure"):
         pass
 
 class NidsEngine:
-    """Core Network Intrusion Detection Engine orchestrating dissection and rule evaluation."""
-
-    def __init__(self, config=None):
-        self.config = config or {}
-        self.detector = NetworkDetector(self.config)
-        self.reporter = NidsReporter(self.config.get("reports_dir", "reports"))
+    def __init__(self, cfg=None):
+        self.cfg = cfg or {}
+        self.detector = NetworkDetector(self.cfg)
+        self.reporter = NidsReporter(self.cfg.get("reports_dir", "reports"))
         
-        # Setup PCAP capture file
-        pcap_dir = self.config.get("pcap_capture_dir", "captures")
-        timestamp = time.strftime("%Y%m%d_%H%M%S")
-        self.pcap_path = os.path.join(pcap_dir, f"alerts_{timestamp}.pcap")
-        self.pcap_writer = PcapWriter(self.pcap_path) if self.config.get("enable_pcap_dump", True) else None
+        pcap_dir = self.cfg.get("pcap_capture_dir", "captures")
+        stamp = time.strftime("%Y%m%d_%H%M%S")
+        self.pcap_path = os.path.join(pcap_dir, f"alerts_{stamp}.pcap")
+        self.pcap_sink = PcapWriter(self.pcap_path) if self.cfg.get("enable_pcap_dump", True) else None
 
         self.stats = {
             "total_packets": 0,
@@ -40,56 +36,41 @@ class NidsEngine:
             "alerts_count": 0
         }
 
-    def process_packet(self, raw_bytes):
-        """Dissects an incoming raw Ethernet packet and applies detection rules."""
+    def process_packet(self, raw):
         self.stats["total_packets"] += 1
-        eth = PacketParser.parse_ethernet(raw_bytes)
+        eth = PacketParser.parse_ethernet(raw)
         if not eth:
             self.stats["other"] += 1
             return None
 
         alert = None
 
-        # 1. ARP Inspection
         if eth["eth_type"] == 0x0806:
             self.stats["arp"] += 1
-            arp = PacketParser.parse_arp(eth["payload"])
-            if arp:
+            if (arp := PacketParser.parse_arp(eth["payload"])):
                 alert = self.detector.evaluate_arp(arp)
 
-        # 2. IPv4 Inspection
         elif eth["eth_type"] == 0x0800:
             self.stats["ipv4"] += 1
-            ip = PacketParser.parse_ipv4(eth["payload"])
-            if ip:
+            if (ip := PacketParser.parse_ipv4(eth["payload"])):
                 proto = ip["protocol"]
 
-                # TCP
                 if proto == 6:
                     self.stats["tcp"] += 1
-                    tcp = PacketParser.parse_tcp(ip["payload"])
-                    if tcp:
+                    if (tcp := PacketParser.parse_tcp(ip["payload"])):
                         alert = self.detector.evaluate_tcp(ip, tcp)
-                        # Check for HTTP payload on common web ports or payload presence
-                        if tcp["payload"] and (tcp["dest_port"] in (80, 8080, 8000) or tcp["src_port"] in (80, 8080, 8000)):
-                            http = PacketParser.parse_http(tcp["payload"])
-                            if http:
-                                http_alert = self.detector.evaluate_http(ip, http)
-                                if http_alert:
-                                    alert = http_alert
+                        # Check web payloads for credential leaks
+                        if tcp["payload"] and {tcp["dest_port"], tcp["src_port"]} & {80, 8080, 8000}:
+                            if (http := PacketParser.parse_http(tcp["payload"])):
+                                alert = self.detector.evaluate_http(ip, http) or alert
 
-                # UDP
                 elif proto == 17:
                     self.stats["udp"] += 1
-                    udp = PacketParser.parse_udp(ip["payload"])
-                    if udp:
-                        # DNS inspection
-                        if udp["dest_port"] == 53 or udp["src_port"] == 53:
-                            domain = PacketParser.parse_dns_query(udp["payload"])
-                            if domain:
-                                alert = self.detector.evaluate_dns(ip, domain)
+                    if (udp := PacketParser.parse_udp(ip["payload"])):
+                        if 53 in (udp["dest_port"], udp["src_port"]):
+                            if (q := PacketParser.parse_dns_query(udp["payload"])):
+                                alert = self.detector.evaluate_dns(ip, q)
 
-                # ICMP
                 elif proto == 1:
                     self.stats["icmp"] += 1
                 else:
@@ -97,102 +78,91 @@ class NidsEngine:
 
         if alert:
             self.stats["alerts_count"] += 1
-            self._print_alert(alert)
-            if self.pcap_writer:
-                self.pcap_writer.write_packet(raw_bytes)
+            self._display_alert(alert)
+            if self.pcap_sink:
+                self.pcap_sink.write_packet(raw)
 
         return alert
 
-    def _print_alert(self, alert):
-        sev = alert.severity
-        color_tag = "[CRITICAL]" if sev == "CRITICAL" else "[HIGH]"
-        print(f"\n🚨 {color_tag} {alert.rule_name}")
+    def _display_alert(self, alert):
+        sev_tag = "[CRITICAL]" if alert.severity == "CRITICAL" else "[HIGH]"
+        print(f"\n🚨 {sev_tag} {alert.rule_name}")
         print(f"   Severity : {alert.severity}")
         print(f"   MITRE    : {alert.mitre_id}")
         print(f"   Flow     : {alert.src} -> {alert.dest}")
         print(f"   Details  : {alert.description}")
 
     def analyze_pcap(self, pcap_path):
-        """Reads and analyzes an offline .pcap capture file packet-by-packet."""
         if not os.path.exists(pcap_path):
-            print(f"[x] Error: PCAP file not found: {pcap_path}")
+            print(f"[x] PCAP not found: {pcap_path}")
             return None
 
-        print(f"[*] Analyzing offline PCAP: {pcap_path}")
-        with open(pcap_path, "rb") as f:
-            global_header = f.read(24)
-            if len(global_header) < 24:
-                print("[x] Invalid PCAP file header.")
+        print(f"[*] Parsing PCAP stream from {pcap_path}...")
+        with open(pcap_path, "rb") as fh:
+            hdr = fh.read(24)
+            if len(hdr) < 24:
                 return None
 
-            magic = struct.unpack("!I", global_header[:4])[0]
-            # Standard PCAPs: 0xa1b2c3d4 or 0xd4c3b2a1
+            magic = struct.unpack("!I", hdr[:4])[0]
             endian = ">" if magic == 0xa1b2c3d4 else "<"
 
-            while True:
-                header_data = f.read(16)
-                if len(header_data) < 16:
+            while rec_hdr := fh.read(16):
+                if len(rec_hdr) < 16:
                     break
-                ts_sec, ts_usec, incl_len, orig_len = struct.unpack(f"{endian}IIII", header_data)
-                packet_data = f.read(incl_len)
-                if len(packet_data) < incl_len:
+                _, _, cap_len, _ = struct.unpack(f"{endian}IIII", rec_hdr)
+                frame = fh.read(cap_len)
+                if len(frame) < cap_len:
                     break
-                self.process_packet(packet_data)
+                self.process_packet(frame)
 
         return self.finalize_session("OFFLINE_PCAP")
 
-    def run_live(self, host_ip=None, packet_limit=None):
-        """Runs live packet capture on Windows using raw socket (requires administrator)."""
+    def run_live(self, bind_ip=None, max_pkts=None):
         if sys.platform != "win32":
-            print("[!] Live raw socket capture in this script is optimized for Windows.")
+            print("[!] Win32 raw socket IOCTLs required for live mode.")
             return None
 
-        target_host = host_ip or socket.gethostbyname(socket.gethostname())
-        print(f"[*] Binding raw socket to host IP: {target_host}")
+        host = bind_ip or socket.gethostbyname(socket.gethostname())
+        print(f"[*] Attaching raw socket on {host}...")
 
         try:
-            # Create raw socket (IPv4)
-            sniffer = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_IP)
-            sniffer.bind((target_host, 0))
-            sniffer.setsockopt(socket.IPPROTO_IP, socket.IP_HDRINCL, 1)
+            sock = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_IP)
+            sock.bind((host, 0))
+            sock.setsockopt(socket.IPPROTO_IP, socket.IP_HDRINCL, 1)
+            # Promiscuous mode IOCTL
+            sock.ioctl(socket.SIO_RCVALL, socket.RCVALL_ON)
+            print(f"[*] Sniffing active. Press Ctrl+C to halt.")
 
-            # Enable promiscuous mode via Windows IOCTL
-            # SIO_RCVALL = 0x98000001
-            sniffer.ioctl(socket.SIO_RCVALL, socket.RCVALL_ON)
-            print(f"[*] Sniffing active on {target_host}. Press Ctrl+C to terminate...")
-
-            count = 0
+            seen = 0
             while True:
-                raw_data = sniffer.recvfrom(65535)[0]
-                # Windows raw IP socket receives IP packet without Ethernet frame,
-                # so synthesize dummy Ethernet frame for uniform pipeline
-                dummy_eth = b"\x00\x11\x22\x33\x44\x55\xaa\xbb\xcc\xdd\xee\xff\x08\x00" + raw_data
-                self.process_packet(dummy_eth)
-                count += 1
-                if packet_limit and count >= packet_limit:
+                buf = sock.recvfrom(65535)[0]
+                # Synthesize a dummy Ethernet header for uniform downstream processing
+                synth_frame = b"\x00\x11\x22\x33\x44\x55\xaa\xbb\xcc\xdd\xee\xff\x08\x00" + buf
+                self.process_packet(synth_frame)
+                seen += 1
+                if max_pkts and seen >= max_pkts:
                     break
         except PermissionError:
-            print("[x] Permission Error: Live raw socket capture on Windows requires running the terminal as Administrator.")
-            print("    Recommendation: Run safe attack simulation with: py main.py --simulate")
+            print("[x] Permission denied: Live packet capture on Windows requires an elevated terminal (Run as Administrator).")
+            print("    Run safe simulated telemetry instead:  py main.py --simulate")
         except KeyboardInterrupt:
-            print("\n[*] Stopping live sniffer...")
+            print("\n[*] Sniffing halted.")
         finally:
             try:
-                sniffer.ioctl(socket.SIO_RCVALL, socket.RCVALL_OFF)
-                sniffer.close()
+                sock.ioctl(socket.SIO_RCVALL, socket.RCVALL_OFF)
+                sock.close()
             except Exception:
                 pass
 
         return self.finalize_session("LIVE_SNIFFER")
 
-    def finalize_session(self, mode="SIMULATION"):
-        """Compiles session statistics and exports JSON and HTML reports."""
-        if self.pcap_writer:
-            self.pcap_writer.close()
+    def finalize_session(self, label="SIMULATION"):
+        if self.pcap_sink:
+            self.pcap_sink.close()
 
-        alerts_dicts = [a.to_dict() for a in self.detector.alerts]
+        records = [a.to_dict() for a in self.detector.alerts]
         summary = {
-            "mode": mode,
+            "mode": label,
             "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
             "packets_analyzed": self.stats["total_packets"],
             "protocol_breakdown": {
@@ -202,19 +172,19 @@ class NidsEngine:
                 "ICMP": self.stats["icmp"],
                 "Other": self.stats["other"]
             },
-            "alerts_count": len(alerts_dicts),
-            "alerts": alerts_dicts,
-            "pcap_file": self.pcap_path if self.pcap_writer else None
+            "alerts_count": len(records),
+            "alerts": records,
+            "pcap_file": self.pcap_path if self.pcap_sink else None
         }
 
-        json_path, html_path = self.reporter.generate_reports(summary)
-        summary["json_report"] = json_path
-        summary["html_report"] = html_path
+        json_out, html_out = self.reporter.generate_reports(summary)
+        summary["json_report"] = json_out
+        summary["html_report"] = html_out
 
-        self._print_summary(summary)
+        self._print_stats(summary)
         return summary
 
-    def _print_summary(self, summary):
+    def _print_stats(self, summary):
         print("\n" + "=" * 60)
         print("📊 NET-SENTRY: NIDS TELEMETRY SUMMARY")
         print("=" * 60)

@@ -3,53 +3,45 @@ import subprocess
 import threading
 
 class Notifier:
-    """Manages system alerts, audio warnings, and desktop notifications."""
-    
     @staticmethod
     def play_alert(severity="HIGH"):
-        """Plays an audible security alert tone."""
         if sys.platform != "win32":
             return
         try:
             import winsound
             if severity in ("CRITICAL", "HIGH"):
-                # Double high-pitch warning beep
-                winsound.Beep(1200, 150)
-                winsound.Beep(1600, 250)
+                winsound.Beep(1200, 140)
+                winsound.Beep(1550, 220)
             else:
                 winsound.MessageBeep(winsound.MB_ICONEXCLAMATION)
         except Exception:
             pass
 
     @staticmethod
-    def show_desktop_notification(title, message, is_threat=False):
-        """Displays a native Windows toast notification."""
+    def show_desktop_notification(title, msg, is_alert=False):
         if sys.platform != "win32":
             return
 
-        def _notify_thread():
+        def _fire():
             try:
-                # Use PowerShell toast/balloon notification
-                ps_script = f"""
+                # Spawn lightweight notification balloon via WinForms assembly
+                ps_cmd = f"""
                 [reflection.assembly]::loadwithpartialname('System.Windows.Forms') | Out-Null
-                $notify = New-Object System.Windows.Forms.NotifyIcon
-                $notify.Icon = [System.Drawing.SystemIcons]::Information
-                if ('{is_threat}' -eq 'True') {{
-                    $notify.Icon = [System.Drawing.SystemIcons]::Warning
-                }}
-                $notify.BalloonTipTitle = '{title}'
-                $notify.BalloonTipText = '{message}'
-                $notify.Visible = $True
-                $notify.ShowBalloonTip(5000)
-                Start-Sleep -Seconds 3
-                $notify.Dispose()
+                $toast = New-Object System.Windows.Forms.NotifyIcon
+                $toast.Icon = if ('{is_alert}' -eq 'True') {{ [System.Drawing.SystemIcons]::Warning }} else {{ [System.Drawing.SystemIcons]::Information }}
+                $toast.BalloonTipTitle = '{title}'
+                $toast.BalloonTipText = '{msg}'
+                $toast.Visible = $True
+                $toast.ShowBalloonTip(4500)
+                Start-Sleep -Seconds 2
+                $toast.Dispose()
                 """
                 subprocess.run(
-                    ["powershell", "-NoProfile", "-WindowStyle", "Hidden", "-Command", ps_script],
+                    ["powershell", "-NoProfile", "-WindowStyle", "Hidden", "-Command", ps_cmd],
                     capture_output=True,
-                    timeout=8
+                    timeout=7
                 )
             except Exception:
                 pass
 
-        threading.Thread(target=_notify_thread, daemon=True).start()
+        threading.Thread(target=_fire, daemon=True).start()

@@ -5,96 +5,85 @@ import time
 import stat
 
 class QuarantineVault:
-    """Safely isolates and neutralizes detected malware from external drives."""
-    
-    def __init__(self, vault_dir="quarantine"):
-        self.vault_dir = os.path.abspath(vault_dir)
-        os.makedirs(self.vault_dir, exist_ok=True)
+    def __init__(self, target_dir="quarantine"):
+        self.vault_path = os.path.abspath(target_dir)
+        os.makedirs(self.vault_path, exist_ok=True)
 
-    def isolate(self, file_path, threat_info):
-        """
-        Moves the target file to the vault, renames it with .quarantined,
-        sets read-only permission, and saves forensic metadata.
-        """
-        if not os.path.exists(file_path):
-            return False, "File does not exist or was already removed."
+    def isolate(self, fpath, threat):
+        if not os.path.exists(fpath):
+            return False, "Target file missing on disk"
 
         try:
-            filename = os.path.basename(file_path)
-            sha = threat_info.get("sha256", "nohash")[:12]
-            timestamp = int(time.time())
-            quarantined_name = f"{timestamp}_{sha}_{filename}.quarantined"
-            target_vault_path = os.path.join(self.vault_dir, quarantined_name)
-            meta_path = target_vault_path + ".meta.json"
+            name = os.path.basename(fpath)
+            digest = threat.get("sha256", "nohash")[:12]
+            epoch = int(time.time())
+            quarantined_name = f"{epoch}_{digest}_{name}.quarantined"
+            dest = os.path.join(self.vault_path, quarantined_name)
+            meta_dest = dest + ".meta.json"
 
-            file_size = os.path.getsize(file_path)
+            file_size = os.path.getsize(fpath)
+            shutil.move(fpath, dest)
 
-            # Move file into vault
-            shutil.move(file_path, target_vault_path)
-
-            # Strip write/execute permissions (Read-only)
+            # Strip write/exec bits so it cannot be launched by accident
             try:
-                os.chmod(target_vault_path, stat.S_IREAD)
-            except Exception:
+                os.chmod(dest, stat.S_IREAD)
+            except OSError:
                 pass
 
-            # Store metadata
-            meta = {
-                "original_path": file_path,
-                "original_filename": filename,
+            manifest = {
+                "original_path": fpath,
+                "original_filename": name,
                 "quarantined_file": quarantined_name,
                 "quarantined_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-                "threat_name": threat_info.get("threat_name", "Unknown Threat"),
-                "threat_type": threat_info.get("threat_type", "GENERIC"),
-                "severity": threat_info.get("severity", "HIGH"),
-                "sha256": threat_info.get("sha256", ""),
+                "threat_name": threat.get("threat_name", "Generic.Threat"),
+                "threat_type": threat.get("threat_type", "GENERIC"),
+                "severity": threat.get("severity", "HIGH"),
+                "sha256": threat.get("sha256", ""),
                 "size_bytes": file_size
             }
 
-            with open(meta_path, "w", encoding="utf-8") as f:
-                json.dump(meta, f, indent=4)
+            with open(meta_dest, "w", encoding="utf-8") as fh:
+                json.dump(manifest, fh, indent=4)
 
-            return True, target_vault_path
-        except Exception as e:
-            return False, str(e)
+            return True, dest
+        except Exception as err:
+            return False, str(err)
 
     def list_quarantined(self):
-        """Returns a list of all quarantined files with their metadata."""
-        items = []
-        if not os.path.exists(self.vault_dir):
-            return items
+        if not os.path.exists(self.vault_path):
+            return []
 
-        for fname in os.listdir(self.vault_dir):
-            if fname.endswith(".meta.json"):
-                meta_path = os.path.join(self.vault_dir, fname)
-                try:
-                    with open(meta_path, "r", encoding="utf-8") as f:
-                        items.append(json.load(f))
-                except Exception:
-                    pass
-        return items
+        entries = []
+        for item in os.listdir(self.vault_path):
+            if not item.endswith(".meta.json"):
+                continue
+            meta_file = os.path.join(self.vault_path, item)
+            try:
+                with open(meta_file, "r", encoding="utf-8") as fh:
+                    entries.append(json.load(fh))
+            except (json.JSONDecodeError, OSError):
+                continue
+        return entries
 
-    def restore(self, quarantined_name, restore_dir=None):
-        """Restores a quarantined file if verified safe (false positive)."""
-        meta_path = os.path.join(self.vault_dir, quarantined_name + ".meta.json")
-        source_path = os.path.join(self.vault_dir, quarantined_name)
+    def restore(self, quarantined_name, custom_dest=None):
+        meta_file = os.path.join(self.vault_path, quarantined_name + ".meta.json")
+        vault_file = os.path.join(self.vault_path, quarantined_name)
 
-        if not os.path.exists(source_path) or not os.path.exists(meta_path):
-            return False, "Quarantined item or metadata not found."
+        if not (os.path.exists(vault_file) and os.path.exists(meta_file)):
+            return False, "Target archive or manifest missing from vault"
 
         try:
-            with open(meta_path, "r", encoding="utf-8") as f:
-                meta = json.load(f)
+            with open(meta_file, "r", encoding="utf-8") as fh:
+                manifest = json.load(fh)
 
-            dest_path = restore_dir or meta.get("original_path")
-            dest_dir = os.path.dirname(dest_path)
-            if dest_dir:
-                os.makedirs(dest_dir, exist_ok=True)
+            restore_target = custom_dest or manifest.get("original_path")
+            parent = os.path.dirname(restore_target)
+            if parent:
+                os.makedirs(parent, exist_ok=True)
 
-            # Restore read/write permission before moving
-            os.chmod(source_path, stat.S_IWRITE | stat.S_IREAD)
-            shutil.move(source_path, dest_path)
-            os.remove(meta_path)
-            return True, f"Restored to {dest_path}"
-        except Exception as e:
-            return False, f"Restore failed: {e}"
+            os.chmod(vault_file, stat.S_IWRITE | stat.S_IREAD)
+            shutil.move(vault_file, restore_target)
+            os.remove(meta_file)
+            return True, f"Restored -> {restore_target}"
+        except Exception as err:
+            return False, f"Restore failed: {err}"
